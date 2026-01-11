@@ -198,12 +198,7 @@
 <form id="csrf-form" style="display:none;">@Html.AntiForgeryToken()</form>
 
 @section Scripts {
-@if (!isOffline)
-{
     <script>
-        var playlist = @Html.Raw(Json.Serialize(playlistForJs));
-        var startTrackId = @Html.Raw(Json.Serialize(ViewBag.StartTrackId));
-        var startOffset = @Html.Raw(Json.Serialize(ViewBag.StartOffset ?? 0));
         var stationId = '@Model.StationId';
         var audio = document.getElementById('audioPlayer');
         var btnStart = document.getElementById('btnStartRadio');
@@ -213,129 +208,170 @@
         var onlineView = document.getElementById('onlineView');
         var trackLabel = document.getElementById('currentTrackName');
         var btnLike = document.getElementById('btnLike');
-        var currentIndex = 0;
+        var btnDislike = document.getElementById('btnDislike');
+        
         var hls = null;
+        var isPlayingLive = false;
+        var currentTrackId = null;
 
-        async function checkStatusAndNext() {
-            try {
-                let response = await fetch('/Home/GetRadioStatus?stationId=' + stationId);
-                if (response.ok) {
-                    let status = await response.json();
-                    if (status.isOffline) {
-                        goOffline();
-                        return;
-                    }
-                    playlist = status.playlist;
-                    currentIndex++;
-                    if (currentIndex >= playlist.length) currentIndex = 0;
-                    playTrack(currentIndex, 0);
+        // Допоміжна функція для перемикання інтерфейсу в режим "Онлайн"
+        function uiGoOnline() {
+            if (offlineView.style.display !== 'none') {
+                offlineView.style.display = 'none';
+                onlineView.style.display = 'block';
+                // Показуємо кнопку Play (оверлей), якщо аудіо ще не грає
+                if (audio.paused) {
+                    overlay.style.display = 'block';
+                    container.style.display = 'none';
                 }
-            } catch (e) {
-                console.error("Помилка перевірки статусу:", e);
             }
         }
 
-        function goOffline() {
-            audio.pause();
-            onlineView.style.display = 'none';
-            offlineView.style.display = 'block';
-        }
+        function loadAudioSource(url, isLive) {
+            console.log("Loading source: " + url);
 
-        function playTrack(index, startTime = 0) {
-            if (!playlist || playlist.length === 0) {
-                goOffline();
-                return;
-            }
-            currentIndex = index;
-            var track = playlist[index];
-            trackLabel.innerText = track.title;
-            updateButtons(track.userRating, track.likesCount, track.dislikesCount);
-            btnLike.dataset.trackId = track.trackId;
-            var streamUrl = track.url;
             if (Hls.isSupported()) {
                 if(hls) hls.destroy();
-                hls = new Hls();
-                hls.loadSource(streamUrl);
+                hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+                hls.loadSource(url);
                 hls.attachMedia(audio);
                 hls.on(Hls.Events.MANIFEST_PARSED, function () {
-                    if (startTime > 0) audio.currentTime = startTime;
-                    attemptPlay();
+                    audio.play().catch(e => console.log("Autoplay blocked"));
+                });
+                hls.on(Hls.Events.ERROR, function (event, data) {
+                    if (data.fatal) {
+                        if(data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                            console.log("Network error, retrying...");
+                            hls.startLoad();
+                        } else {
+                            hls.destroy();
+                        }
+                    }
                 });
             } else if (audio.canPlayType('application/vnd.apple.mpegurl')) {
-                audio.src = streamUrl;
-                if (startTime > 0) audio.currentTime = startTime;
-                attemptPlay();
+                audio.src = url;
+                audio.play();
+            }
+            
+            if (isLive) {
+                trackLabel.innerHTML = "<span class='text-danger animate-pulse'>🔴 ПРЯМИЙ ЕФІР ЗІ СТУДІЇ</span>";
+                var badges = document.querySelectorAll('.live-badge');
+                badges.forEach(b => b.classList.remove('d-none'));
+                if(btnLike) btnLike.style.display = 'none';
+                if(btnDislike) btnDislike.style.display = 'none';
+            } else {
+                var badges = document.querySelectorAll('.live-badge');
+                badges.forEach(b => b.classList.add('d-none'));
+                if(btnLike) btnLike.style.display = 'flex';
+                if(btnDislike) btnDislike.style.display = 'flex';
             }
         }
 
-        function attemptPlay() {
-            var promise = audio.play();
-            if (promise !== undefined) {
-                promise.then(_ => {
-                    overlay.style.display = 'none';
-                    container.style.display = 'block';
-                }).catch(error => {
-                    console.log("Autoplay prevented. Show button.");
-                    container.style.display = 'none';
-                    overlay.style.display = 'block';
-                });
-            }
-        }
+        async function checkRadioStatus() {
+            try {
+                let response = await fetch('/Home/GetRadioStatus?stationId=' + stationId + '&t=' + Date.now());
+                if (!response.ok) return;
+                
+                let status = await response.json();
 
-        if (document.getElementById('onlineView').style.display !== 'none') {
-            var startIndex = 0;
-            if (startTrackId) {
-                var foundIndex = playlist.findIndex(t => t.trackId === startTrackId);
-                if (foundIndex !== -1) startIndex = foundIndex;
-            }
-            playTrack(startIndex, startOffset);
+                // 1. Повна тиша (Офлайн)
+                if (status.isOffline && !status.isLiveStream) {
+                    // Тільки якщо ми раніше були онлайн
+                    if (onlineView.style.display !== 'none') {
+                        audio.pause();
+                        onlineView.style.display = 'none';
+                        offlineView.style.display = 'block';
+                    }
+                    return;
+                }
+
+                // Якщо ми тут, значить ми ОНЛАЙН. Перемикаємо UI
+                uiGoOnline();
+
+                // 2. Живий ефір
+                if (status.isLiveStream) {
+                    if (!isPlayingLive) {
+                        console.log("Switching to LIVE...");
+                        isPlayingLive = true;
+                        currentTrackId = null;
+                        // Додаємо nocache, щоб браузер побачив новий файл
+                        loadAudioSource(status.liveUrl + "?nocache=" + Date.now(), true);
+                        
+                        // Примусово показуємо плеєр, якщо він схований
+                        if(overlay.style.display === 'none') {
+                            container.style.display = 'block';
+                        }
+                    }
+                    return;
+                }
+
+                // 3. Звичайний плейлист
+                if (isPlayingLive) {
+                    console.log("Switching back to Auto-DJ...");
+                    isPlayingLive = false;
+                    window.location.reload(); 
+                    return;
+                }
+
+                if (status.startTrackId && status.startTrackId !== currentTrackId) {
+                    var trackInfo = status.playlist.find(t => t.trackId === status.startTrackId);
+                    if (trackInfo) {
+                        currentTrackId = status.startTrackId;
+                        trackLabel.innerText = trackInfo.title;
+                        
+                        if (!audio.src.includes(trackInfo.url) && (!hls || hls.url !== trackInfo.url)) {
+                             loadAudioSource(trackInfo.url, false);
+                             if (status.startOffset > 0) audio.currentTime = status.startOffset;
+                        }
+                        updateButtons(trackInfo.userRating, trackInfo.likesCount, trackInfo.dislikesCount, trackInfo.trackId);
+                    }
+                }
+
+            } catch (e) { console.error(e); }
         }
 
         btnStart.addEventListener('click', function() {
             overlay.style.display = 'none';
             container.style.display = 'block';
-            audio.play();
+            // Пробуємо грати, навіть якщо ще нічого не завантажилось, щоб розблокувати Autoplay
+            audio.play().catch(e => {}); 
+            checkRadioStatus(); 
         });
 
-        audio.addEventListener('ended', function () {
-            console.log("Трек закінчився. Перевіряю ефір...");
-            checkStatusAndNext();
-        });
+        // Запускаємо перевірку одразу і потім кожні 5 сек
+        // Це важливо для "гарячого" підключення, якщо користувач зайшов, коли ефір ВЖЕ йде
+        checkRadioStatus();
+        setInterval(checkRadioStatus, 5000);
 
+        // --- Старі функції ---
         window.toggleMute = function() {
             audio.muted = !audio.muted;
-            var icon = document.getElementById('muteIcon');
-            icon.className = audio.muted ? "bi bi-volume-mute-fill fs-4" : "bi bi-volume-up-fill fs-4";
+            document.getElementById('muteIcon').className = audio.muted ? "bi bi-volume-mute-fill fs-4" : "bi bi-volume-up-fill fs-4";
         };
 
         window.rateTrack = async function(isLike) {
-            var trackId = document.getElementById('btnLike').dataset.trackId;
+            if(!currentTrackId) return;
             var token = document.querySelector('#csrf-form input').value;
             try {
-                let response = await fetch(`/Home/RateTrack?trackId=${trackId}&isLike=${isLike}`, {
+                let response = await fetch(`/Home/RateTrack?trackId=${currentTrackId}&isLike=${isLike}`, {
                     method: 'POST',
                     headers: { 'RequestVerificationToken': token }
                 });
-                if (response.status === 401) { alert("Увійдіть, щоб голосувати!"); return; }
+                if (response.status === 401) { alert("Увійдіть!"); return; }
                 if (response.ok) {
                     let data = await response.json();
-                    updateButtons(data.status, data.likes, data.dislikes);
-                    playlist[currentIndex].userRating = data.status;
-                    playlist[currentIndex].likesCount = data.likes;
-                    playlist[currentIndex].dislikesCount = data.dislikes;
+                    updateButtons(data.status, data.likes, data.dislikes, currentTrackId);
                 }
-            } catch (e) { console.error(e); }
+            } catch (e) {}
         };
 
-        function updateButtons(status, likes, dislikes) {
-            var btnLike = document.getElementById('btnLike');
-            var btnDislike = document.getElementById('btnDislike');
-            var iconLike = document.getElementById('iconLike');
-            var iconDislike = document.getElementById('iconDislike');
-            var countLike = document.getElementById('countLike');
-            var countDislike = document.getElementById('countDislike');
+        function updateButtons(status, likes, dislikes, trackId) {
+            if(btnLike) btnLike.dataset.trackId = trackId;
+            if(!btnLike) return;
             btnLike.className = "rating-btn rounded-circle p-4 d-flex flex-column align-items-center justify-content-center";
             btnDislike.className = "rating-btn rounded-circle p-4 d-flex flex-column align-items-center justify-content-center";
+            var iconLike = document.getElementById('iconLike');
+            var iconDislike = document.getElementById('iconDislike');
             iconLike.className = "bi bi-hand-thumbs-up fs-3";
             iconDislike.className = "bi bi-hand-thumbs-down fs-3";
             if (status === 1) {
@@ -345,9 +381,8 @@
                 btnDislike.classList.add('btn-danger', 'active');
                 iconDislike.className = "bi bi-hand-thumbs-down-fill fs-3";
             }
-            countLike.innerText = (likes > 0) ? likes : "";
-            countDislike.innerText = (dislikes > 0) ? dislikes : "";
+            document.getElementById('countLike').innerText = likes > 0 ? likes : "";
+            document.getElementById('countDislike').innerText = dislikes > 0 ? dislikes : "";
         }
     </script>
-}
 }

@@ -1,91 +1,143 @@
 @model IEnumerable<OnlineRadioStation.Domain.DjStream>
 @{
-    ViewData["Title"] = "Управління стрімами";
-    bool isLive = ViewBag.IsLive ?? false;
+    ViewData["Title"] = "Управління ефіром";
+    
+    // Отримуємо розширені статуси з контролера
+    bool isAnyLive = ViewBag.IsLive ?? false;     // Чи йде хоч якийсь ефір
+    bool isMicLive = ViewBag.IsMicLive ?? false;  // Чи це мікрофон
+    bool isDbLive = ViewBag.IsDbLive ?? false;    // Чи це плейлист з бази
     bool isRandom = ViewBag.IsRandom ?? false;
+    
     var playlist = ViewBag.CurrentPlaylist as IEnumerable<OnlineRadioStation.Domain.PlaybackQueue>;
 }
 
 <div class="container">
-    <h1>Управління ефіром</h1>
+    <h1>🎛️ Ефірний пульт</h1>
     <hr />
-    <div class="card mb-4 text-center shadow-sm @(isLive ? "border-success" : "border-secondary")">
+
+    <div class="card mb-4 text-center shadow-sm @(isAnyLive ? "border-success" : "border-secondary")">
         <div class="card-body">
-            @if (isLive)
+            @if (isAnyLive)
             {
-                <h2 class="text-success animate-pulse">В ЕФІРІ (ON AIR)</h2>
-                <p class="text-muted">Ви зараз ведете трансляцію.</p>
-                <div class="my-3 p-3 bg-light rounded border">
-                    <h1 id="liveTimer" class="display-4 fw-bold text-dark" style="font-family: monospace;">00:00:00</h1>
-                    <small class="text-muted">тривалість поточної сесії</small>
-                </div>
-
-                @if (isRandom)
+                <h2 class="text-success animate-pulse">🔴 В ЕФІРІ (ON AIR)</h2>
+                
+                @if (isMicLive)
                 {
-                    <div class="alert alert-info d-inline-block">
-                        <i class="bi bi-shuffle"></i> Ефір у режимі Shuffle (випадковий порядок)
+                    <p class="text-muted fw-bold">🎙️ Джерело: Живий звук (Мікрофон / Вініл)</p>
+                    <div class="alert alert-warning d-inline-block">
+                        Увага: Плейлист тимчасово заглушено.
+                    </div>
+                    <div class="mt-4">
+                        <button id="btnStopMic" class="btn btn-danger btn-lg px-5" onclick="stopStreaming()">
+                            ЗАВЕРШИТИ LIVE СТРІМ
+                        </button>
                     </div>
                 }
-                else
+                else if (isDbLive)
                 {
-                    <div class="alert alert-secondary d-inline-block">
-                        <i class="bi bi-list-ol"></i> Ефір за порядком плейлиста
+                    <p class="text-muted fw-bold">🎵 Джерело: Автоматичний плейлист</p>
+                    <div class="my-3 p-3 bg-light rounded border">
+                        <h1 id="liveTimer" class="display-4 fw-bold text-dark" style="font-family: monospace;">00:00:00</h1>
+                        <small class="text-muted">тривалість сесії</small>
                     </div>
-                }
 
-                <form asp-action="ToggleStream" method="post" class="mt-4">
-                    <input type="hidden" name="action" value="stop" />
-                    <button type="submit" class="btn btn-danger btn-lg px-5">
-                        ЗАВЕРШИТИ ЕФІР
-                    </button>
-                </form>
+                    @if (isRandom)
+                    {
+                        <div class="alert alert-info d-inline-block">
+                            <i class="bi bi-shuffle"></i> Режим Shuffle
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="alert alert-secondary d-inline-block">
+                            <i class="bi bi-list-ol"></i> За порядком
+                        </div>
+                    }
+
+                    <form asp-action="ToggleStream" method="post" class="mt-4">
+                        <input type="hidden" name="action" value="stop" />
+                        <button type="submit" class="btn btn-danger btn-lg px-5">
+                            ЗАВЕРШИТИ ЕФІР
+                        </button>
+                    </form>
+                }
             }
             else
             {
                 <h2 class="text-secondary">ОФЛАЙН</h2>
-                <p class="text-muted">Ефір зупинено. Готові почати?</p>
+                <p class="text-muted">Ефір зупинено. Оберіть режим запуску:</p>
 
-                <form asp-action="ToggleStream" method="post">
-                    <input type="hidden" name="action" value="start" />
+                <ul class="nav nav-pills justify-content-center mb-3" id="pills-tab" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="pills-playlist-tab" data-bs-toggle="pill" data-bs-target="#pills-playlist" type="button" role="tab">
+                            <i class="bi bi-music-note-list"></i> Авто-Діджей (Плейлист)
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="pills-live-tab" data-bs-toggle="pill" data-bs-target="#pills-live" type="button" role="tab">
+                            <i class="bi bi-mic-fill"></i> Live Studio (Мікрофон/Вініл)
+                        </button>
+                    </li>
+                </ul>
 
-                    <div class="mb-3 text-start">
-                        <div class="form-check">
-                            <input type="checkbox" class="form-check-input" id="startRandom" name="startRandom" value="true">
-                            <label class="form-check-label" for="startRandom">
-                                Запустити у режимі Shuffle (випадковий порядок)
-                            </label>
+                <div class="tab-content" id="pills-tabContent">
+                    
+                    <div class="tab-pane fade show active" id="pills-playlist" role="tabpanel">
+                        <div class="card card-body bg-light mx-auto" style="max-width: 500px;">
+                            <form asp-action="ToggleStream" method="post">
+                                <input type="hidden" name="action" value="start" />
+                                <div class="mb-3 text-start form-check form-switch">
+                                    <input type="checkbox" class="form-check-input" id="startRandom" name="startRandom" value="true">
+                                    <label class="form-check-label" for="startRandom">
+                                        Випадковий порядок (Shuffle)
+                                    </label>
+                                </div>
+                                <button type="submit" class="btn btn-success w-100">
+                                    <i class="bi bi-play-circle"></i> Запустити Плейлист
+                                </button>
+                            </form>
                         </div>
                     </div>
 
-                    <button type="submit" class="btn btn-success btn-lg px-5">
-                        ПОЧАТИ ЕФІР
-                    </button>
-                </form>
+                    <div class="tab-pane fade" id="pills-live" role="tabpanel">
+                        <div class="card card-body bg-light mx-auto" style="max-width: 500px;">
+                            <div class="mb-3 text-start">
+                                <label class="form-label fw-bold">Джерело звуку:</label>
+                                <select id="audioSource" class="form-select"></select>
+                                <div class="form-text">
+                                    Підключіть вініловий програвач як "Line In" або оберіть мікрофон.
+                                </div>
+                            </div>
+                            <div id="connectionStatus" class="alert alert-info d-none">
+                                Підключення...
+                            </div>
+                            <button id="btnStartMic" class="btn btn-danger w-100" onclick="startStreaming()">
+                                <i class="bi bi-broadcast"></i> Вийти в Live Ефір
+                            </button>
+                        </div>
+                    </div>
+                </div>
             }
         </div>
     </div>
 
-    @if (isLive)
+    @if (isAnyLive)
     {
         <div class="card border-primary mb-4 shadow-sm">
             <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
-                <span>📡 Студійний монітор (Те, що чують слухачі)</span>
-                <span class="badge bg-light text-dark" id="monitorStatus">Підключення...</span>
+                <span>📡 Монітор слухача</span>
+                <span class="badge bg-light text-dark" id="monitorStatus">Оновлення...</span>
             </div>
             <div class="card-body d-flex align-items-center gap-3">
-                
-                @* === ПЛЕЄР ПРИБРАНО, ЗАЛИШИЛАСЯ ТІЛЬКИ ІКОНКА === *@
                 <div class="text-primary bg-light rounded-circle p-3 d-flex align-items-center justify-content-center" style="width: 60px; height: 60px;">
-                    <i class="bi bi-broadcast fs-3"></i>
+                    <i class="bi bi-headphones fs-3"></i>
                 </div>
-
-                @* Інформація *@
                 <div class="flex-grow-1">
-                    <h5 class="mb-0 fw-bold" id="monitorTitle">Завантаження...</h5>
-                    <small class="text-muted">Зараз в ефірі</small>
+                    <h5 class="mb-0 fw-bold" id="monitorTitle">
+                        @(isMicLive ? "🎙️ Пряме включення з студії" : "Завантаження...")
+                    </h5>
+                    <small class="text-muted">Зараз чують ваші слухачі</small>
                 </div>
-
-                @* Кнопка оновлення *@
                 <button class="btn btn-sm btn-outline-secondary" onclick="syncMonitor()">
                     <i class="bi bi-arrow-clockwise"></i>
                 </button>
@@ -97,14 +149,23 @@
 
     <div class="row mb-3 align-items-center">
         <div class="col">
-            <h2>Поточний ефір</h2>
-            <p class="text-muted">Черга відтворення на станції.</p>
+            <h2>Редактор Плейлиста</h2>
+            <p class="text-muted">
+                @if(isMicLive) 
+                { 
+                    <span class="text-warning"><i class="bi bi-exclamation-triangle"></i> Ефір йде з мікрофону. Цей плейлист на паузі.</span> 
+                } 
+                else 
+                { 
+                    <span>Керуйте чергою треків.</span> 
+                }
+            </p>
         </div>
     </div>
 
     @if (playlist != null && playlist.Any())
     {
-        <div class="card shadow-sm mb-5">
+        <div class="card shadow-sm mb-5" style="@(isMicLive ? "opacity: 0.6; pointer-events: none;" : "")">
             <div class="card-body p-0">
                 <table class="table table-hover align-middle mb-0">
                     <thead class="table-light">
@@ -121,27 +182,23 @@
                         @foreach (var item in playlist)
                         {
                             string rowClass = item.IsActive ? "" : "table-secondary text-muted text-decoration-line-through";
-
+                            
+                            // Якщо DB Live - підсвічуємо поточний трек (логіку підсвітки робить JS знизу)
                             <tr id="row-@item.TrackId" class="@rowClass transition-colors">
                                 <td class="fw-bold text-secondary">@(rowNum++)</td>
-
                                 <td>
-                                    @if (!isLive && !isRandom)
+                                    @if (!isAnyLive) // Дозволяємо сортувати тільки коли офлайн
                                     {
                                         <div class="btn-group-vertical btn-group-sm">
-                                            @if (item != playlist.First())
-                                            {
+                                            @if (item != playlist.First()) {
                                                 <form asp-action="ChangeStreamQueuePosition" method="post">
-                                                    <input type="hidden" name="queueId" value="@item.QueueId" />
-                                                    <input type="hidden" name="direction" value="up" />
+                                                    <input type="hidden" name="queueId" value="@item.QueueId" /><input type="hidden" name="direction" value="up" />
                                                     <button type="submit" class="btn btn-light border py-0"><i class="bi bi-caret-up-fill"></i></button>
                                                 </form>
                                             }
-                                            @if (item != playlist.Last())
-                                            {
+                                            @if (item != playlist.Last()) {
                                                 <form asp-action="ChangeStreamQueuePosition" method="post">
-                                                    <input type="hidden" name="queueId" value="@item.QueueId" />
-                                                    <input type="hidden" name="direction" value="down" />
+                                                    <input type="hidden" name="queueId" value="@item.QueueId" /><input type="hidden" name="direction" value="down" />
                                                     <button type="submit" class="btn btn-light border py-0"><i class="bi bi-caret-down-fill"></i></button>
                                                 </form>
                                             }
@@ -152,37 +209,21 @@
                                         <span class="text-muted">—</span>
                                     }
                                 </td>
-
                                 <td><span class="fw-bold">@item.Track.Title</span></td>
                                 <td>@item.Track.Duration.ToString(@"mm\:ss")</td>
-
                                 <td class="text-end">
-                                    @if (isLive)
+                                    @if (isDbLive) 
                                     {
-                                        @if (item.IsActive)
-                                        {
-                                            <span class="badge bg-success">В ротації</span>
-                                        }
-                                        else
-                                        {
-                                            <span class="badge bg-secondary">Пропущено</span>
-                                        }
+                                        @if (item.IsActive) { <span class="badge bg-success">В ротації</span> } else { <span class="badge bg-secondary">Пропущено</span> }
                                     }
-                                    else
+                                    else if (!isAnyLive) // Кнопки активні тільки офлайн
                                     {
                                         <form asp-action="ToggleTrackActive" method="post">
                                             <input type="hidden" name="queueId" value="@item.QueueId" />
-                                            @if (item.IsActive)
-                                            {
-                                                <button type="submit" class="btn btn-sm btn-outline-warning">
-                                                    <i class="bi bi-slash-circle"></i> Скіпнути
-                                                </button>
-                                            }
-                                            else
-                                            {
-                                                <button type="submit" class="btn btn-sm btn-outline-success">
-                                                    <i class="bi bi-play-circle"></i> Відновити
-                                                </button>
+                                            @if (item.IsActive) {
+                                                <button type="submit" class="btn btn-sm btn-outline-warning"><i class="bi bi-slash-circle"></i> Скіпнути</button>
+                                            } else {
+                                                <button type="submit" class="btn btn-sm btn-outline-success"><i class="bi bi-play-circle"></i> Відновити</button>
                                             }
                                         </form>
                                     }
@@ -196,47 +237,21 @@
     }
     else
     {
-        <div class="alert alert-warning">Плейлист порожній. Перейдіть у вкладку "Плейлист" щоб додати музику.</div>
+        <div class="alert alert-warning">Плейлист порожній.</div>
     }
 
     <hr class="my-5" />
     <h3>Історія сесій</h3>
     <table class="table table-striped">
-        <thead>
-            <tr>
-                <th>Початок</th>
-                <th>Кінець</th>
-                <th>Тривалість</th>
-                <th>Статус</th>
-            </tr>
-        </thead>
+        <thead><tr><th>Початок</th><th>Кінець</th><th>Тривалість</th><th>Статус</th></tr></thead>
         <tbody>
             @foreach (var stream in Model)
             {
                 <tr>
                     <td>@stream.StartTime.ToLocalTime().ToString("g")</td>
                     <td>@(stream.EndTime.HasValue ? stream.EndTime.Value.ToLocalTime().ToString("g") : "-")</td>
-                    <td>
-                        @if (stream.EndTime.HasValue)
-                        {
-                            var duration = stream.EndTime.Value - stream.StartTime;
-                            <span>@duration.ToString(@"hh\:mm") год</span>
-                        }
-                        else
-                        {
-                            <span class="text-success">Триває...</span>
-                        }
-                    </td>
-                    <td>
-                        @if (stream.EndTime == null)
-                        {
-                            <span class="badge bg-success">Active</span>
-                        }
-                        else
-                        {
-                            <span class="badge bg-secondary">Finished</span>
-                        }
-                    </td>
+                    <td>@if(stream.EndTime.HasValue){ var d = stream.EndTime.Value - stream.StartTime; <span>@d.ToString(@"hh\:mm") год</span> } else { <span class="text-success">Триває...</span> }</td>
+                    <td>@if(stream.EndTime == null){ <span class="badge bg-success">Active</span> } else { <span class="badge bg-secondary">Finished</span> }</td>
                 </tr>
             }
         </tbody>
@@ -245,102 +260,198 @@
 
 @section Scripts {
 <style>
-    .transition-colors {
-        transition: background-color 0.5s ease;
-    }
-    .animate-pulse {
-        animation: pulse 2s infinite;
-    }
-    @@keyframes pulse {
-        0% { opacity: 1; }
-        50% { opacity: 0.5; }
-        100% { opacity: 1; }
-    }
+    .transition-colors { transition: background-color 0.5s ease; }
+    .animate-pulse { animation: pulse 2s infinite; }
+    @@keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
 </style>
 
 <script>
-    document.addEventListener('DOMContentLoaded', function () {
-        // === 1. ТАЙМЕР ЕФІРУ ===
+    // === ГЛОБАЛЬНІ ЗМІННІ ===
+    let mediaRecorder;
+    let socket;
+    var stationId = '@ViewBag.StationId'; // Отримуємо ID станції глобально
+
+    // === 1. ФУНКЦІЯ СИНХРОНІЗАЦІЇ (Винесена нагору) ===
+    async function syncMonitor() {
+        var monitorTitle = document.getElementById('monitorTitle');
+        // Якщо елемента немає на сторінці (наприклад, ще не завантажився), виходимо
+        if (!monitorTitle) return;
+
+        try {
+            let response = await fetch('/Home/GetRadioStatus?stationId=' + stationId + '&t=' + new Date().getTime());
+            if (response.ok) {
+                let status = await response.json();
+                
+                // Якщо це Live Stream (мікрофон)
+                if (status.isLiveStream) {
+                        monitorTitle.innerText = "🎙️ Пряме включення з студії";
+                        document.getElementById('monitorStatus').innerText = "LIVE INPUT";
+                        document.getElementById('monitorStatus').className = "badge bg-danger animate-pulse";
+                        return;
+                }
+
+                // Якщо це Плейлист
+                if (status.startTrackId) {
+                    var currentTrack = status.playlist.find(t => t.trackId === status.startTrackId);
+                    if (currentTrack) {
+                        monitorTitle.innerText = "🎵 " + currentTrack.title;
+                        document.getElementById('monitorStatus').innerText = "Auto-DJ";
+                        document.getElementById('monitorStatus').className = "badge bg-success";
+                    }
+                    highlightRow(status.startTrackId);
+                } else {
+                    // Якщо нічого не грає
+                    if(!status.isLiveStream) {
+                            monitorTitle.innerText = "Офлайн";
+                            document.getElementById('monitorStatus').innerText = "Offline";
+                            document.getElementById('monitorStatus').className = "badge bg-secondary";
+                    }
+                }
+            }
+        } catch (e) { console.error(e); }
+    }
+
+    function highlightRow(activeTrackId) {
+        document.querySelectorAll('tr').forEach(row => {
+            if (!row.classList.contains('table-secondary')) row.classList.remove('table-primary', 'fw-bold');
+        });
+        if (activeTrackId) {
+            var row = document.getElementById('row-' + activeTrackId);
+            if (row) row.classList.add('table-primary', 'fw-bold');
+        }
+    }
+
+    // === 2. ЛОГІКА ДЛЯ LIVE STREAMING ===
+    
+    // Ініціалізація списку мікрофонів
+    document.addEventListener('DOMContentLoaded', function() {
+        const select = document.getElementById('audioSource');
+        if(select) {
+            navigator.mediaDevices.enumerateDevices().then(devices => {
+                devices.filter(d => d.kind === 'audioinput').forEach(device => {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.text = device.label || `Microphone ${select.length + 1}`;
+                    select.appendChild(option);
+                });
+            }).catch(err => console.log("Mic permission needed"));
+        }
+
+        // Запускаємо таймер тут
+        initTimer();
+        
+        // Запускаємо моніторинг
+        syncMonitor();
+        setInterval(syncMonitor, 5000);
+    });
+
+    async function startStreaming() {
+        const btn = document.getElementById('btnStartMic');
+        const statusDiv = document.getElementById('connectionStatus');
+        const sourceSelect = document.getElementById('audioSource');
+        
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Запуск...';
+        statusDiv.classList.remove('d-none');
+        statusDiv.innerText = "Ініціалізація аудіо...";
+
+        try {
+            const deviceId = sourceSelect.value;
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    deviceId: deviceId ? { exact: deviceId } : undefined,
+                    echoCancellation: false,
+                    autoGainControl: false,
+                    noiseSuppression: false,
+                    channelCount: 2 
+                }
+            });
+
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            socket = new WebSocket(`${protocol}//${window.location.host}/ws/stream`);
+
+            socket.onopen = () => {
+                statusDiv.className = "alert alert-success";
+                statusDiv.innerText = "🔴 З'єднання встановлено! Ви в ефірі.";
+                
+                btn.disabled = false;
+                btn.classList.remove('btn-danger');
+                btn.classList.add('btn-dark', 'animate-pulse');
+                btn.innerHTML = '<i class="bi bi-stop-circle"></i> ЗАВЕРШИТИ ЕФІР';
+                btn.onclick = stopStreaming;
+
+                mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0 && socket.readyState === 1) {
+                        socket.send(event.data);
+                    }
+                };
+
+                mediaRecorder.start(250);
+                
+                document.getElementById('audioSource').disabled = true;
+                
+                // Тепер ця функція доступна
+                setTimeout(syncMonitor, 2000);
+            };
+
+            socket.onerror = (e) => {
+                console.error(e);
+                alert("Помилка WebSocket з'єднання");
+                resetUI();
+            };
+
+            socket.onclose = () => {
+                console.log("Socket closed");
+                resetUI();
+            };
+
+        } catch (err) {
+            console.error(err);
+            alert("Помилка доступу до мікрофону: " + err.message);
+            resetUI();
+        }
+    }
+
+    function stopStreaming() {
+        if(mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+        if(socket) socket.close();
+        setTimeout(() => window.location.reload(), 500);
+    }
+
+    function resetUI() {
+        const btn = document.getElementById('btnStartMic');
+        const statusDiv = document.getElementById('connectionStatus');
+        
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-broadcast"></i> Вийти в Live Ефір';
+        btn.classList.add('btn-danger');
+        btn.classList.remove('btn-dark', 'animate-pulse');
+        btn.onclick = startStreaming;
+        
+        document.getElementById('audioSource').disabled = false;
+        statusDiv.classList.add('d-none');
+    }
+
+    // === 3. ТАЙМЕР ===
+    function initTimer() {
         var startTimeStr = '@ViewBag.StreamStartTime';
         if (startTimeStr) {
             var startTime = new Date(startTimeStr);
             var timerElement = document.getElementById('liveTimer');
-            
-            function updateTimer() {
-                var now = new Date();
-                var diff = now - startTime; // різниця в мс
-                if (diff < 0) diff = 0; // на всяк випадок
-
-                var totalSeconds = Math.floor(diff / 1000);
-                var hours = Math.floor(totalSeconds / 3600);
-                var minutes = Math.floor((totalSeconds % 3600) / 60);
-                var seconds = totalSeconds % 60;
-
-                var formattedTime =
-                    (hours < 10 ? "0" + hours : hours) + ":" +
-                    (minutes < 10 ? "0" + minutes : minutes) + ":" +
-                    (seconds < 10 ? "0" + seconds : seconds);
-                
-                if(timerElement) timerElement.innerText = formattedTime;
-            }
-            
-            setInterval(updateTimer, 1000);
-            updateTimer();
-        }
-
-        // === 2. СТУДІЙНИЙ МОНІТОР (ТІЛЬКИ ТЕКСТ) ===
-        var stationId = '@ViewBag.StationId';
-        var monitorTitle = document.getElementById('monitorTitle');
-        
-        // Якщо немає елемента заголовка (наприклад, ефір офлайн), виходимо
-        if (!monitorTitle) return;
-
-        window.syncMonitor = async function() {
-            try {
-                let response = await fetch('/Home/GetRadioStatus?stationId=' + stationId);
-                if (response.ok) {
-                    let status = await response.json();
-                    
-                    // 1. Оновлюємо назву
-                    if (status.startTrackId) {
-                        // Шукаємо трек у плейлисті
-                        var currentTrack = status.playlist.find(t => t.trackId === status.startTrackId);
-                        if (currentTrack) {
-                            monitorTitle.innerText = "🎵 " + currentTrack.title;
-                            document.getElementById('monitorStatus').innerText = "Online";
-                            document.getElementById('monitorStatus').className = "badge bg-success";
-                        }
-                    } else {
-                        monitorTitle.innerText = "Очікування треку...";
-                    }
-
-                    // 2. Підсвічуємо рядок
-                    highlightRow(status.startTrackId);
-                }
-            } catch (e) {
-                console.error("Monitor error:", e);
-                document.getElementById('monitorStatus').innerText = "Offline";
-                document.getElementById('monitorStatus').className = "badge bg-secondary";
-            }
-        };
-
-        function highlightRow(activeTrackId) {
-            document.querySelectorAll('tr').forEach(row => {
-                if (!row.classList.contains('table-secondary')) {
-                    row.classList.remove('table-primary', 'fw-bold');
-                }
-            });
-            if (activeTrackId) {
-                var row = document.getElementById('row-' + activeTrackId);
-                if (row) {
-                    row.classList.add('table-primary', 'fw-bold');
-                }
+            if(timerElement) {
+                setInterval(() => {
+                    var now = new Date();
+                    var diff = Math.floor((now - startTime) / 1000);
+                    if (diff < 0) diff = 0;
+                    var h = Math.floor(diff / 3600).toString().padStart(2, '0');
+                    var m = Math.floor((diff % 3600) / 60).toString().padStart(2, '0');
+                    var s = (diff % 60).toString().padStart(2, '0');
+                    timerElement.innerText = `${h}:${m}:${s}`;
+                }, 1000);
             }
         }
-
-        // Запускаємо синхронізацію кожні 5 секунд
-        syncMonitor();
-        setInterval(syncMonitor, 5000);
-    });
+    }
 </script>
 }

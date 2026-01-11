@@ -1,7 +1,10 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Hosting;
+using OnlineRadioStation.Domain;
 using OnlineRadioStation.Services;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -11,11 +14,19 @@ namespace RadioStationSolution.WebApp.Controllers
     {
         private readonly IUserService _userService;
         private readonly IStationService _stationService;
+        private readonly LiveStreamService _liveService;
+        private readonly IWebHostEnvironment _env;
 
-        public HomeController(IUserService userService, IStationService stationService)
+        public HomeController(
+            IUserService userService,
+            IStationService stationService,
+            LiveStreamService liveService,
+            IWebHostEnvironment env)
         {
             _userService = userService;
             _stationService = stationService;
+            _liveService = liveService;
+            _env = env;
         }
 
         [HttpGet]
@@ -85,27 +96,38 @@ namespace RadioStationSolution.WebApp.Controllers
         }
 
         [HttpGet]
-        public async Task<IActionResult> Listen(Guid id)
-        {
-            var station = await _stationService.GetStationWithPlaylistAsync(id);
-            if (station == null) return NotFound();
-            var (currentTrack, offset) = await _stationService.GetCurrentRadioStateAsync(id);
-            var orderedTracks = await _stationService.GetCurrentPlaylistOrderAsync(id);
-            ViewBag.OrderedPlaylist = orderedTracks;
-            ViewBag.StartTrackId = currentTrack?.TrackId;
-            ViewBag.StartOffset = offset.TotalSeconds;
-            ViewBag.IsOffline = (currentTrack == null);
-            var userIdStr = HttpContext.Session.GetString("CurrentUserId");
-            if (Guid.TryParse(userIdStr, out Guid userId))
-            {
-                ViewBag.UserRatings = await _userService.GetUserTrackRatingsAsync(userId);
-            }
-            else
-            {
-                ViewBag.UserRatings = new Dictionary<Guid, int>();
-            }
-            return View(station);
-        }
+public async Task<IActionResult> Listen(Guid id)
+{
+    var station = await _stationService.GetStationWithPlaylistAsync(id);
+    if (station == null) return NotFound();
+
+    var (currentTrack, offset) = await _stationService.GetCurrentRadioStateAsync(id);
+    var orderedTracks = await _stationService.GetCurrentPlaylistOrderAsync(id);
+
+    ViewBag.OrderedPlaylist = orderedTracks;
+    ViewBag.StartTrackId = currentTrack?.TrackId;
+    ViewBag.StartOffset = offset.TotalSeconds;
+
+    // === ВИПРАВЛЕННЯ ТУТ ===
+    // Ми офлайн ТІЛЬКИ якщо немає треку в БД І немає живого ефіру
+    bool isDbPlaying = (currentTrack != null);
+    bool isLiveBroadcasting = _liveService.IsBroadcasting;
+    
+    // Якщо грає хоч щось - ми не офлайн
+    ViewBag.IsOffline = !(isDbPlaying || isLiveBroadcasting); 
+    // =======================
+
+    var userIdStr = HttpContext.Session.GetString("CurrentUserId");
+    if (Guid.TryParse(userIdStr, out Guid userId))
+    {
+        ViewBag.UserRatings = await _userService.GetUserTrackRatingsAsync(userId);
+    }
+    else
+    {
+        ViewBag.UserRatings = new Dictionary<Guid, int>();
+    }
+    return View(station);
+}
 
         [HttpGet]
         public IActionResult Register()
@@ -164,7 +186,8 @@ namespace RadioStationSolution.WebApp.Controllers
                 int newUserStatus = await _userService.ToggleTrackRatingAsync(userId, trackId, isLike);
 
                 var (likes, dislikes) = await _userService.GetTrackVotesAsync(trackId);
-                return Ok(new {
+                return Ok(new
+                {
                     status = newUserStatus,
                     likes = likes,
                     dislikes = dislikes
@@ -176,6 +199,20 @@ namespace RadioStationSolution.WebApp.Controllers
         [HttpGet]
         public async Task<IActionResult> GetRadioStatus(Guid stationId)
         {
+            var livePlaylistPath = Path.Combine(_env.WebRootPath, "live", "index.m3u8");
+
+            if (_liveService.IsBroadcasting)
+            {
+                return Ok(new
+                {
+                    isOffline = false,
+                    isLiveStream = true,
+                    liveUrl = "/live/index.m3u8",
+                    playlist = new List<object>()
+        
+                });
+}
+
             var (currentTrack, offset) = await _stationService.GetCurrentRadioStateAsync(stationId);
             bool isOffline = (currentTrack == null);
             var playlistForJs = new List<object>();
@@ -195,8 +232,9 @@ namespace RadioStationSolution.WebApp.Controllers
                     if (!string.IsNullOrEmpty(item.HlsUrl))
                     {
                         int rating = userRatings.ContainsKey(item.TrackId) ? userRatings[item.TrackId] : 0;
-                        var votes = _userService.GetTrackVotesAsync(item.TrackId).Result;
-                        playlistForJs.Add(new {
+                        var votes = await _userService.GetTrackVotesAsync(item.TrackId);
+                        playlistForJs.Add(new
+                        {
                             trackId = item.TrackId.ToString(),
                             title = item.Title,
                             url = item.HlsUrl,
@@ -209,35 +247,37 @@ namespace RadioStationSolution.WebApp.Controllers
                     }
                 }
             }
-            return Ok(new {
+            return Ok(new
+            {
                 isOffline = isOffline,
+                isLiveStream = false,
                 startTrackId = currentTrack?.TrackId,
                 startOffset = offset.TotalSeconds,
                 playlist = playlistForJs
             });
         }
 
-[HttpGet]
-public async Task<IActionResult> Dashboard()
-{
-    var userIdStr = HttpContext.Session.GetString("CurrentUserId");
-    
-    if (string.IsNullOrEmpty(userIdStr) || !Guid.TryParse(userIdStr, out Guid userId))
-    {
-        return RedirectToAction("Login");
-    }
+        [HttpGet]
+        public async Task<IActionResult> Dashboard()
+        {
+            var userIdStr = HttpContext.Session.GetString("CurrentUserId");
 
-    var user = await _userService.GetUserByIdAsync(userId);
-    
-    if (user == null) return RedirectToAction("Login");
+            if (string.IsNullOrEmpty(userIdStr) || !Guid.TryParse(userIdStr, out Guid userId))
+            {
+                return RedirectToAction("Login");
+            }
 
-    return user.Role.ToLower() switch
-    {
-        "admin" => RedirectToAction("AdminDashboard"),
-        "dj"    => RedirectToAction("DjDashboard"),
-        _       => RedirectToAction("UserDashboard")
-    };
-}
+            var user = await _userService.GetUserByIdAsync(userId);
+
+            if (user == null) return RedirectToAction("Login");
+
+            return user.Role.ToLower() switch
+            {
+                "admin" => RedirectToAction("AdminDashboard"),
+                "dj" => RedirectToAction("DjDashboard"),
+                _ => RedirectToAction("UserDashboard")
+            };
+        }
 
         public IActionResult Privacy()
         {

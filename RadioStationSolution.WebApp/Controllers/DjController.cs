@@ -17,17 +17,23 @@ namespace RadioStationSolution.WebApp.Controllers
         private readonly IUserService _userService;
         private readonly ITrackRepository _trackRepo;
         private readonly IPlaybackQueueRepository _queueRepo;
+        private readonly IAudioProcessor _audioProcessor;
+        private readonly LiveStreamService _liveService;
 
         public DjController(
             IStationService stationService,
             IUserService userService,
             ITrackRepository trackRepo,
-            IPlaybackQueueRepository queueRepo)
+            IPlaybackQueueRepository queueRepo,
+            IAudioProcessor audioProcessor,
+            LiveStreamService liveService)
         {
             _stationService = stationService;
             _userService = userService;
             _trackRepo = trackRepo;
             _queueRepo = queueRepo;
+            _audioProcessor = audioProcessor;
+            _liveService = liveService;
         }
 
         private async Task<User?> GetCurrentUserAsync()
@@ -81,13 +87,9 @@ namespace RadioStationSolution.WebApp.Controllers
                 await trackFile.CopyToAsync(stream);
             }
 
-            IAudioConverter adapter = new FFmpegAdapter();
-            StreamFactory factory = new BitrateStreamFactory(adapter);
-            IAudioProcessor facade = new AudioProcessingFacade(adapter, _trackRepo, _queueRepo, factory);
-
             try
             {
-                await facade.ProcessNewTrackAsync(
+                await _audioProcessor.ProcessNewTrackAsync(
                     tempFilePath: tempFilePath,
                     title: title,
                     stationId: djUser.AssignedStationId.Value,
@@ -131,7 +133,14 @@ namespace RadioStationSolution.WebApp.Controllers
             }
 
             ViewBag.CurrentPlaylist = playlist;
-            ViewBag.IsLive = activeStream != null;
+
+            bool isDbStreamLive = activeStream != null;
+            bool isMicLive = _liveService.IsBroadcasting;
+
+            ViewBag.IsLive = isDbStreamLive || isMicLive;
+            ViewBag.IsMicLive = isMicLive;
+            ViewBag.IsDbLive = isDbStreamLive;
+
             ViewBag.IsRandom = activeStream?.IsRandom ?? false;
             ViewBag.StationId = djUser.AssignedStationId;
 
@@ -401,6 +410,5 @@ namespace RadioStationSolution.WebApp.Controllers
 
             return RedirectToAction(nameof(ManageStreams));
         }
-
-            }
+    }
 }

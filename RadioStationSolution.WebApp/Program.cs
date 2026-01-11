@@ -14,19 +14,28 @@ builder.Services.AddDbContext<ApplicationContext>(options =>
 
 builder.Services.AddScoped<IStationRepository, StationRepository>();
 builder.Services.AddScoped<IUserRepository, UserRepository>();
-
 builder.Services.AddScoped<ITrackRepository, TrackRepository>();
 builder.Services.AddScoped<IPlaybackQueueRepository, PlaybackQueueRepository>();
 builder.Services.AddScoped<IDjStreamRepository, DjStreamRepository>();
 builder.Services.AddScoped<ILikeDislikeRepository, LikeDislikeRepository>();
 builder.Services.AddScoped<ISavedStationRepository, SavedStationRepository>();
+
 builder.Services.AddScoped<IStationService, StationService>();
 builder.Services.AddScoped<IUserService, UserService>();
+
+builder.Services.AddTransient<IAudioConverter, FFmpegAdapter>();
+builder.Services.AddTransient<StreamFactory, BitrateStreamFactory>();
+builder.Services.AddScoped<IAudioProcessor, AudioProcessingFacade>();
+builder.Services.AddScoped<ListeningStatsVisitor>();
+
+builder.Services.AddSingleton<LiveStreamService>(provider => 
+{
+    var env = provider.GetRequiredService<IWebHostEnvironment>();
+    return new LiveStreamService(env.WebRootPath);
+});
+
 builder.Services.AddSession();
 builder.Services.AddHttpContextAccessor();
-
-
-builder.Services.AddScoped<ListeningStatsVisitor>();
 
 var app = builder.Build();
 
@@ -51,7 +60,6 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
-
 var provider = new FileExtensionContentTypeProvider();
 provider.Mappings[".m3u8"] = "application/vnd.apple.mpegurl"; 
 provider.Mappings[".ts"] = "video/mp2t"; 
@@ -63,16 +71,11 @@ app.UseStaticFiles(new StaticFileOptions
 
 app.UseSession();
 app.UseRouting();
-
 app.UseAuthorization();
+app.UseWebSockets();
 
 app.MapControllerRoute(
     name: "default",
     pattern: "{controller=Home}/{action=Index}/{id?}");
-
-app.MapControllerRoute(
-    name: "test",
-    pattern: "test/{action=IteratorTest}",
-    defaults: new { controller = "Test" });
 
 app.Run();
